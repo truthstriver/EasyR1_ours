@@ -32,9 +32,10 @@ python3 -m verl.trainer.main \
     trainer.experiment_name=XiaomiMiMo_7B_RL_geo_grpo \
     worker.actor.fsdp.torch_dtype=bf16 \
     worker.actor.optim.strategy=adamw_bf16 \
-    trainer.logger=['console'] \
+    trainer.logger=['console','tensorboard','swanlab'] \
     trainer.n_gpus_per_node=8 \
     worker.rollout.split_ratio=${SPLIT_RATIO} \
     worker.rollout.n=${ROLLOUT_N} \
     worker.rollout.image_text_mixture=False \
-    worker.rollout.tensor_parallel_size=8
+    worker.rollout.tensor_parallel_size=8 \
+    trainer.save_checkpoint_path=./
