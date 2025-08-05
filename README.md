@@ -15,6 +15,7 @@ trainer:
   val_generations_to_log: 5 #（每一step log 5条）
 ```
 ## 2、启动指令以及数据比例
+需要注意，脚本中的最后一个指令需要谨慎修改一下，保存checkpoint可能会产生500GB空间占用。
 ```bash
 bash examples/XiaomiMiMO_VL_7B_geo3k_grpo.sh
 ```
