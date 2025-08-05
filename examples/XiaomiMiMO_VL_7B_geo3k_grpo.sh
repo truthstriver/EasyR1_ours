@@ -29,12 +29,13 @@ python3 -m verl.trainer.main \
     data.train_files=./data/geometry3k/data@train \
     data.val_files=./data/geometry3k/data@test \
     worker.actor.model.model_path=${MODEL_PATH} \
-    trainer.experiment_name=XiaomiMiMo_7B_RL_geo_grpo \
+    trainer.experiment_name=XiaomiMiMo_7B_RL_geo_grpo_ours_A \
     worker.actor.fsdp.torch_dtype=bf16 \
     worker.actor.optim.strategy=adamw_bf16 \
-    trainer.logger=['console'] \
+    trainer.logger=['console','tensorboard','swanlab'] \
     trainer.n_gpus_per_node=8 \
     worker.rollout.split_ratio=${SPLIT_RATIO} \
     worker.rollout.n=${ROLLOUT_N} \
     worker.rollout.image_text_mixture=False \
-    worker.rollout.tensor_parallel_size=8
+    worker.rollout.tensor_parallel_size=8 \
+    trainer.saver_checkpoint_path=./
