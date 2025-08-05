@@ -53,7 +53,8 @@ python scripts/test_mimo_mathvista.py
 python scripts/test_mimo_mathvision.py
 python scripts/test_mimo_mathverse.py
 ```
-============
+
+---
 # EasyR1: An Efficient, Scalable, Multi-Modality RL Training Framework
 
 [![GitHub Repo stars](https://img.shields.io/github/stars/hiyouga/EasyR1)](https://github.com/hiyouga/EasyR1/stargazers)
