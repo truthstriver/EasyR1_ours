@@ -19,47 +19,11 @@ trainer:
 bash examples/XiaomiMiMO_VL_7B_geo3k_grpo.sh
 ```
 
-可以修改rollout_n以及rollout变化的比例SPLIT_RATIO。
+在脚本中可以修改rollout_n以及rollout变化的比例SPLIT_RATIO。
 
+现在新增了新的实验
 ```bash
-#!/bin/bash
-
-set -x                               # enable debug mode to print commands and their arguments as they are executed
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # replace it with your local GPU IDs
-export PYTHONUNBUFFERED=1
-# export NCCL_P2P_DISABLE=1            # disable NCCL P2P to avoid potential issues with multi-GPU training
-
-# 设置 Hugging Face 镜像和缓存目录
-export HF_ENDPOINT="https://hf-mirror.com"
-export HF_HOME="./hf_home"
-export TRANSFORMERS_CACHE="./hf_home/transformers"
-export HF_DATASETS_CACHE="./hf_home/datasets"
-
-# 可选：创建缓存目录（确保目录存在）
-mkdir -p "$TRANSFORMERS_CACHE"
-mkdir -p "$HF_DATASETS_CACHE"
-
-# 如果可以正常联网，就不需要替换为本地地址，直接自动huggingface下载即可
-MODEL_PATH=XiaomiMiMo/MiMo-VL-7B-RL  # replace it with your local file path
-
-# 修改数据的比例
-SPLIT_RATIO=0.5
-
-# rollout的数量
-ROLLOUT_N=10
-
-python3 -m verl.trainer.main \
-    config=examples/config.yaml \
-    data.train_files=./geometry3k/data@train \
-    data.val_files=./geometry3k/data@test \
-    worker.actor.model.model_path=${MODEL_PATH} \
-    trainer.experiment_name=XiaomiMiMo_7B_RL_geo_grpo \
-    trainer.logger=['console'] \
-    trainer.n_gpus_per_node=8 \
-    worker.rollout.split_ratio=${SPLIT_RATIO} \
-    worker.rollout.n=${ROLLOUT_N} \
-    worker.rollout.image_text_mixture=False \
-    worker.rollout.tensor_parallel_size=8
+bash examples/XiaomiMiMO_VL_7B_geo3k_grpo_add_reward.sh
 ```
 ## 模型合并
 这一个指令会在原始位置生成一个huggingface目录，就是chkpt。
