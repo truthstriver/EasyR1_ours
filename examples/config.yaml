@@ -12,7 +12,7 @@ data:
   val_batch_size: 16
   format_prompt: ./examples/format_prompt/math.jinja
   override_chat_template: null
-  shuffle: true
+  shuffle: false
   seed: 1
   min_pixels: 262144
   max_pixels: 4194304
