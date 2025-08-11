@@ -175,63 +175,62 @@ class RLHFDataset(Dataset):
 
     def __len__(self):
         return len(self.dataset)
-    def __getitem__(self, index: int) -> Dict[str, Any]:
-        """
-        获取并处理单个数据样本，并行生成多模态和纯文本两组数据。
-        """
-        example = self.dataset[index]
-        result = {}
 
-        # --- 1. 处理多模态部分 (图像 + 问题) ---
-        if self.image_key in example and self.problem_key_img in example:
-            mm_messages = [{"role": "user", "content": example[self.problem_key_img]}]
-            mm_prompt = self.processor.apply_chat_template(mm_messages, add_generation_prompt=True, tokenize=False)
-            
-            images = example[self.image_key]
-            if self.image_dir is not None and len(images) > 0 and isinstance(images[0], str):
+    def __getitem__(self, index):
+        example: dict = self.dataset[index]
+        messages = self._build_messages(example)
+
+        if self.image_key in example:
+            prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            images = example.pop(self.image_key)
+            if self.image_dir is not None and len(images) != 0 and isinstance(images[0], str):  # image paths
                 images = [os.path.join(self.image_dir, image) for image in images]
-            
-            resized_images = [process_image(img, min_pixels=self.min_pixels, max_pixels=self.max_pixels) for img in images] or None
-            
-            mm_model_inputs = self.processor(resized_images, [mm_prompt], add_special_tokens=False, return_tensors="pt")
-            mm_input_ids = mm_model_inputs.pop("input_ids")[0]
-            mm_attention_mask = mm_model_inputs.pop("attention_mask")[0]
-            
-            if "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:
-                mm_position_ids = get_rope_index(self.processor, input_ids=mm_input_ids, image_grid_thw=mm_model_inputs.get("image_grid_thw"), attention_mask=mm_attention_mask)
-            else:
-                mm_position_ids = torch.clip(mm_attention_mask.cumsum(dim=0) - 1, min=0)
-            
-            mm_input_ids, mm_attention_mask, mm_position_ids = VF.postprocess_data(
-                input_ids=mm_input_ids, attention_mask=mm_attention_mask, position_ids=mm_position_ids,
-                max_length=self.max_mm_prompt_length, pad_token_id=self.tokenizer.pad_token_id, left_pad=True, truncation=self.truncation
-            )
-            
-            result["mm_input_ids"] = mm_input_ids
-            result["mm_attention_mask"] = mm_attention_mask
-            result["mm_position_ids"] = mm_position_ids
-            result["mm_ground_truth"] = example[self.answer_key_img]
-            result["multi_modal_data"] = {"images": images} # 保留原始图像信息
 
-        # --- 2. 处理纯文本部分 ---
-        if self.problem_key_txt in example:
-            text_messages = [{"role": "user", "content": example[self.problem_key_txt]}]
-            text_prompt = self.tokenizer.apply_chat_template(text_messages, add_generation_prompt=True, tokenize=False)
-            
-            text_model_inputs = self.tokenizer([text_prompt], add_special_tokens=False, return_tensors="pt")
-            text_input_ids = text_model_inputs.pop("input_ids")[0]
-            text_attention_mask = text_model_inputs.pop("attention_mask")[0]
-            
-            text_position_ids = torch.clip(text_attention_mask.cumsum(dim=0) - 1, min=0)
-            
-            text_input_ids, text_attention_mask, text_position_ids = VF.postprocess_data(
-                input_ids=text_input_ids, attention_mask=text_attention_mask, position_ids=text_position_ids,
-                max_length=self.max_text_prompt_length, pad_token_id=self.tokenizer.pad_token_id, left_pad=True, truncation=self.truncation
-            )
+            resized_images = [
+                process_image(image, min_pixels=self.min_pixels, max_pixels=self.max_pixels) for image in images
+            ] or None
+            model_inputs = self.processor(resized_images, [prompt], add_special_tokens=False, return_tensors="pt")
+            input_ids = model_inputs.pop("input_ids")[0]
+            attention_mask = model_inputs.pop("attention_mask")[0]
+            example["multi_modal_data"] = {"images": images}
+        else:
+            prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            model_inputs = self.tokenizer([prompt], add_special_tokens=False, return_tensors="pt")
+            input_ids = model_inputs.pop("input_ids")[0]
+            attention_mask = model_inputs.pop("attention_mask")[0]
 
-            result["text_input_ids"] = text_input_ids
-            result["text_attention_mask"] = text_attention_mask
-            result["text_position_ids"] = text_position_ids
-            result["text_ground_truth"] = example[self.answer_key_txt]
+        if self.processor is not None and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:
+            # qwen2vl mrope
+            position_ids = get_rope_index(
+                self.processor,
+                input_ids=input_ids,
+                image_grid_thw=model_inputs.get("image_grid_thw"),
+                attention_mask=attention_mask,
+            )  # (3, seq_length)
+        else:
+            position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None)  # (seq_length,)
 
-        return result
+        input_ids, attention_mask, position_ids = VF.postprocess_data(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            max_length=self.max_prompt_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=True,
+            truncation=self.truncation,
+        )
+        raw_prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+        if len(raw_prompt_ids) > self.max_prompt_length:
+            if self.truncation == "left":
+                raw_prompt_ids = raw_prompt_ids[-self.max_prompt_length :]
+            elif self.truncation == "right":
+                raw_prompt_ids = raw_prompt_ids[: self.max_prompt_length]
+            elif self.truncation == "error":
+                raise RuntimeError(f"Prompt length {len(raw_prompt_ids)} is longer than {self.max_prompt_length}.")
+
+        example["input_ids"] = input_ids
+        example["attention_mask"] = attention_mask
+        example["position_ids"] = position_ids
+        example["raw_prompt_ids"] = raw_prompt_ids
+        example["ground_truth"] = example.pop(self.answer_key)
+        return example
