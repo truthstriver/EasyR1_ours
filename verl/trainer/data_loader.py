@@ -21,40 +21,6 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 
 from ..utils.dataset import RLHFDataset, collate_fn
 from .config import DataConfig
-def custom_collate_fn(features: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Custom collate function that handles samples with and without images.
-    Specifically handles cases where images may be None, empty lists, or lists containing None.
-    """
-    tensors = defaultdict(list)
-    non_tensors = defaultdict(list)
-    
-    for feature in features:
-        for key, value in feature.items():
-            # Special handling for images field
-            if key == 'images':
-                # Handle cases where images is None, empty list, or list with None elements
-                if value is None or (isinstance(value, list) and 
-                                   (len(value) == 0 or (len(value) > 0 and value[0] is None))):
-                    non_tensors[key].append(None)
-                elif isinstance(value, torch.Tensor):
-                    tensors[key].append(value)
-                else:
-                    non_tensors[key].append(value)
-            else:
-                # Default handling for all other fields
-                if isinstance(value, torch.Tensor):
-                    tensors[key].append(value)
-                else:
-                    non_tensors[key].append(value)
-
-    for key, value in tensors.items():
-        tensors[key] = torch.stack(value, dim=0)
-
-    for key, value in non_tensors.items():
-        non_tensors[key] = np.array(value, dtype=object)
-
-    return {**tensors, **non_tensors}
 
 def create_dataloader(config: DataConfig, tokenizer: PreTrainedTokenizer, processor: Optional[ProcessorMixin]) -> None:
     train_dataset = RLHFDataset(
@@ -90,7 +56,7 @@ def create_dataloader(config: DataConfig, tokenizer: PreTrainedTokenizer, proces
         batch_size=train_batch_size,
         sampler=sampler,
         num_workers=8,
-        collate_fn=custom_collate_fn,
+        collate_fn=collate_fn,
         pin_memory=False,
         drop_last=True,
     )
@@ -121,7 +87,7 @@ def create_dataloader(config: DataConfig, tokenizer: PreTrainedTokenizer, proces
         batch_size=val_batch_size,
         shuffle=False,
         num_workers=8,
-        collate_fn=custom_collate_fn,
+        collate_fn=collate_fn,
         pin_memory=False,
         drop_last=False,
     )
