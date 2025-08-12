@@ -50,7 +50,41 @@ from .metrics import compute_data_metrics, compute_throughout_metrics, compute_t
 
 
 import torch
+def modify_raw_prompt_ids_v2(raw_prompt_ids, target_pair=(872, 198), insert_sequence=(151652, 151655, 151653)):
+    """
+    查找一个序列中连续的 ID 对，并在其后插入指定的 token 序列。
 
+    Args:
+        raw_prompt_ids (list or np.array): 包含一个或多个 token ID 序列的列表。
+        target_pair (tuple, optional): 需要查找的连续 ID 对。默认为 (872, 198)。
+        insert_sequence (tuple, optional): 需要插入的 token ID 序列。默认为 (151652, 151655, 151653)。
+
+    Returns:
+        np.array: 修改后的序列数组。由于序列长度可能发生变化，dtype 设置为 object。
+    """
+    modified_sequences = []
+
+    for seq in raw_prompt_ids:
+        seq_list = list(seq)
+        
+        # 从头开始查找目标 ID 对的第一个出现位置
+        found_idx = -1
+        for i in range(len(seq_list) - 1):
+            if seq_list[i] == target_pair[0] and seq_list[i+1] == target_pair[1]:
+                found_idx = i
+                break  # 找到后即停止搜索
+
+        # 如果找到了目标 ID 对
+        if found_idx != -1:
+            # 确定插入点的位置（在目标 ID 对之后）
+            insert_point = found_idx + 2
+            # 使用切片赋值来插入新序列
+            seq_list[insert_point:insert_point] = list(insert_sequence)
+        
+        modified_sequences.append(seq_list)
+
+    # 使用 dtype=object 的 NumPy 数组来处理可能变化的序列长度
+    return np.array(modified_sequences, dtype=object)
 def modify_raw_prompt_ids(raw_prompt_ids, start_token=151652, end_token=151653, insert_token=151643, pad_token=0):
     modified_sequences = []
 
@@ -84,6 +118,7 @@ def modify_raw_prompt_ids(raw_prompt_ids, start_token=151652, end_token=151653, 
         modified_sequences.append(seq_list)
 
     return np.array(modified_sequences, dtype=object)
+    
 
 
 def modify_input_ids(input_ids, start_token=151652, end_token=151653, insert_token=151643):
@@ -115,7 +150,65 @@ def modify_input_ids(input_ids, start_token=151652, end_token=151653, insert_tok
         modified_input_ids.append(torch.tensor(seq_list, dtype=seq.dtype, device=seq.device))
     
     return torch.stack(modified_input_ids)
+def modify_input_ids_v2(input_ids, pad_token_id=0):
+    """
+    在 input_ids 中找到连续的 [872, 198] token，然后在其后插入 [151652, 151655, 151653]，
+    并从序列开头删除三个填充符以保持长度不变。
 
+    Args:
+        input_ids (torch.Tensor): 输入的 token ID 张量，形状为 (batch_size, sequence_length)。
+        pad_token_id (int, optional): 用于填充的 token ID。默认为 0。
+
+    Returns:
+        torch.Tensor: 修改后的 token ID 张量。
+    """
+    modified_input_ids = []
+    # 要查找的序列
+    sequence_to_find = [872, 198]
+    # 要插入的序列
+    sequence_to_insert = [151652, 151655, 151653]
+    num_to_insert = len(sequence_to_insert)
+
+    for seq in input_ids:
+        # 将 tensor 转换为 Python list 以便进行灵活处理
+        seq_list = seq.tolist()
+        
+        # 寻找 sequence_to_find 的位置
+        found_idx = -1
+        for i in range(len(seq_list) - len(sequence_to_find) + 1):
+            if seq_list[i:i+len(sequence_to_find)] == sequence_to_find:
+                found_idx = i
+                break
+        
+        # 如果找到了目标序列
+        if found_idx != -1:
+            # 1. 在找到的序列后面插入新的 token
+            # 计算插入点的位置，即 [872, 198] 的后面
+            insert_position = found_idx + len(sequence_to_find)
+            # 执行插入操作
+            seq_list = seq_list[:insert_position] + sequence_to_insert + seq_list[insert_position:]
+
+            # 2. 从开头删除溢出的 token（假设是 padding tokens）
+            # 为了保持序列长度不变，需要删除与插入数量相同的 token
+            # 这里我们假设被删除的是序列开头的 padding tokens
+            final_seq_list = seq_list[num_to_insert:]
+
+            # 3.（可选）验证并确保长度严格不变
+            if len(final_seq_list) != len(seq):
+                # 如果插入操作导致原序列末尾的 token 被挤出，上面的切片操作已经处理了
+                # 如果因为其他原因长度不匹配，这里可以添加警告或错误处理
+                # 在这个逻辑下，长度应该始终保持不变
+                pass
+            
+            # 将修改后的 list 转换回 tensor
+            modified_seq = torch.tensor(final_seq_list, dtype=seq.dtype, device=seq.device)
+            modified_input_ids.append(modified_seq)
+        else:
+            # 如果没有找到目标序列，则保持原样
+            modified_input_ids.append(seq)
+            
+    # 将所有处理过的序列重新堆叠成一个 tensor
+    return torch.stack(modified_input_ids)
 def concat_data_protos(obj1: DataProto, obj2: DataProto) -> DataProto:
     """
     Concatenates two DataProto objects.
@@ -183,6 +276,71 @@ def concat_data_protos(obj1: DataProto, obj2: DataProto) -> DataProto:
         non_tensor_batch=new_non_tensor_batch,
         meta_info=new_meta_info
     )
+
+
+
+def split_data_proto(obj: DataProto):
+    """
+    将一个 DataProto 对象按奇偶索引拆分为两个。
+
+    Args:
+        obj: 要拆分的 DataProto 对象。
+
+    Returns:
+        一个包含两个新的 DataProto 对象的元组，
+        第一个包含所有偶数索引的数据，第二个包含所有奇数索引的数据。
+    """
+    if not isinstance(obj, DataProto):
+        raise TypeError("输入必须是 DataProto 对象。")
+
+    total_size = len(obj.batch)
+    if total_size == 0:
+        raise ValueError("无法拆分空的 DataProto 对象。")
+
+    # 1. 按奇偶索引拆分 TensorDict `batch`
+    batch1 = obj.batch[::2]
+    batch2 = obj.batch[1::2]
+
+    # 2. 按奇偶索引拆分 `non_tensor_batch` 中的Numpy数组
+    new_non_tensor_batch1 = {}
+    new_non_tensor_batch2 = {}
+    for key, val in obj.non_tensor_batch.items():
+        if isinstance(val, np.ndarray):
+            new_non_tensor_batch1[key] = val[::2]
+            new_non_tensor_batch2[key] = val[1::2]
+        else:
+            raise TypeError(f"在 non_tensor_batch 中遇到非预期的类型 '{key}': {type(val)}")
+
+    # 3. 处理 meta_info 的拆分
+    new_meta_info1 = {}
+    new_meta_info2 = {}
+    for key, val in obj.meta_info.items():
+        if isinstance(val, list):
+            # 对于列表，按奇偶拆分
+            new_meta_info1[key] = val[::2]
+            new_meta_info2[key] = val[1::2]
+        elif isinstance(val, (int, float, str, dict)):
+            # 对于标量和字典，在合并时它们必须是相同的，所以直接复制
+            new_meta_info1[key] = val
+            new_meta_info2[key] = val
+        else:
+            raise TypeError(f"在 meta_info 中遇到非预期的类型 '{key}': {type(val)}")
+
+    # 创建并返回两个新的 DataProto 对象
+    obj1 = DataProto(
+        batch=batch1,
+        non_tensor_batch=new_non_tensor_batch1,
+        meta_info=new_meta_info1
+    )
+    
+    obj2 = DataProto(
+        batch=batch2,
+        non_tensor_batch=new_non_tensor_batch2,
+        meta_info=new_meta_info2
+    )
+
+    return obj1, obj2
+
 
 class Role(IntEnum):
     """
@@ -284,7 +442,6 @@ def compute_advantage(data: DataProto, adv_estimator: AdvantageEstimator, gamma:
     data.batch["advantages"] = advantages
     data.batch["returns"] = returns
     return data
-
 
 class RayPPOTrainer:
     """
@@ -592,9 +749,13 @@ class RayPPOTrainer:
                 batch_dict = next(self.data_iterator)
 
             meta_info = {"min_pixels": self.config.data.min_pixels, "max_pixels": self.config.data.max_pixels}
-            new_batch: DataProto = DataProto.from_single_dict(batch_dict, meta_info=meta_info)
-
+            new_batch_tmp: DataProto = DataProto.from_single_dict(batch_dict, meta_info=meta_info)
+        
+            # data are interleaved, 1 with img , and 1 without img
             # pop those keys for generation
+            new_batch, batch_pure_text =  split_data_proto(new_batch_tmp)
+
+
             gen_batch_with_img = new_batch.pop(
                 batch_keys=["input_ids", "attention_mask", "position_ids"],
                 non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
@@ -602,23 +763,47 @@ class RayPPOTrainer:
             )
             gen_batch_without_img = deepcopy(gen_batch_with_img)  # avoid modifying the original batch
             _ = gen_batch_without_img.pop(batch_keys=[],non_tensor_batch_keys=["multi_modal_data"],meta_info_keys=[])
-            # 应用修改
+
+            text_gen_batch_with_img = batch_pure_text.pop(
+                batch_keys=["input_ids", "attention_mask", "position_ids"],
+                non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
+                meta_info_keys=["min_pixels", "max_pixels"],
+            )
+            text_gen_batch_without_img = deepcopy(text_gen_batch_with_img)  # avoid modifying the original batch
+            _ = text_gen_batch_without_img.pop(batch_keys=[],non_tensor_batch_keys=["multi_modal_data"],meta_info_keys=[])
+            
+
+
+
+            
+            # 应用修改 去掉图<image token>也得去掉
             gen_batch_without_img.batch["input_ids"] = modify_input_ids(gen_batch_without_img.batch["input_ids"])
             gen_batch_without_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids(
                 gen_batch_without_img.non_tensor_batch["raw_prompt_ids"])
             
+            # 文本加图要有<image token>
+            text_gen_batch_with_img.batch["input_ids"] = modify_input_ids_v2(text_gen_batch_with_img.batch["input_ids"])
+            text_gen_batch_with_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids_v2(
+                text_gen_batch_with_img.non_tensor_batch["raw_prompt_ids"])
+
 
             n_with_img = int(self.config.worker.rollout.n * (1-self.config.worker.rollout.split_ratio))
 
             gen_batch_with_img.meta_info["n"] = n_with_img
             gen_batch_without_img.meta_info["n"] = self.config.worker.rollout.n - n_with_img
 
-
+            text_gen_batch_without_img.meta_info['n'] = n_with_img
+            text_gen_batch_with_img.meta_info["n"] = self.config.worker.rollout.n - n_with_img
+            
 
             # generate a batch
             gen_batch_output_with_img = self.actor_rollout_ref_wg.generate_sequences(gen_batch_with_img)
-
             gen_batch_output_without_img = self.actor_rollout_ref_wg.generate_sequences(gen_batch_without_img)
+
+            text_gen_batch_output_without_img = self.actor_rollout_ref_wg.generate_sequences(text_gen_batch_without_img) # origin
+            text_gen_batch_output_with_img = self.actor_rollout_ref_wg.generate_sequences(text_gen_batch_with_img) # mod
+
+
 
             # if self.config.algorithm.adv_estimator == "remax":
             #     gen_baseline_batch = deepcopy(gen_batch)
@@ -642,6 +827,8 @@ class RayPPOTrainer:
             new_batch_with_image = deepcopy(new_batch)
             new_batch_without_image = deepcopy(new_batch)
 
+            text_new_batch_with_image = deepcopy(batch_pure_text)
+            text_new_batch_without_image = deepcopy(batch_pure_text)
 
             new_batch_with_image.non_tensor_batch["uid"] = np.array(
                 [str(uuid.uuid4()) for _ in range(len(new_batch_with_image.batch))], dtype=object
@@ -651,6 +838,15 @@ class RayPPOTrainer:
                 dtype=object,
             )
 
+            text_new_batch_with_image.non_tensor_batch["uid"] = np.array(
+                [str(uuid.uuid4()) for _ in range(len(text_new_batch_with_image.batch))], dtype=object
+            )
+            text_new_batch_without_image.non_tensor_batch["uid"] = np.array(
+                [str(uuid.uuid4()) for _ in range(len(text_new_batch_without_image.batch))], dtype=object,
+            )
+
+
+            
             new_batch_with_image = new_batch_with_image.repeat(
                 repeat_times=n_with_img, interleave=True
             )  # repeat to align with repeated responses in rollout
@@ -659,10 +855,19 @@ class RayPPOTrainer:
                 repeat_times=self.config.worker.rollout.n - n_with_img, interleave=True
             )  # repeat to align with repeated responses in rollout
             
+            # repeat pure text data
+            text_new_batch_without_image = text_new_batch_without_image.repeat(
+                repeat_times=n_with_img, interleave=True
+            )  # repeat to align with repeated responses in rollout
+            
+            text_new_batch_with_image = text_new_batch_with_image.repeat(
+                repeat_times=self.config.worker.rollout.n - n_with_img, interleave=True
+            )  # repeat to align with repeated responses in rollout
             # new_batch = new_batch.union(gen_batch_output)
             new_batch_with_image = new_batch_with_image.union(gen_batch_output_with_img)
             new_batch_without_image = new_batch_without_image.union(gen_batch_output_without_img)
-
+            text_new_batch_with_image = text_new_batch_with_image.union(text_gen_batch_output_with_img)
+            text_new_batch_without_image = text_new_batch_without_image.union(text_gen_batch_output_without_img)
             # # filter group
             # if self.config.algorithm.online_filtering:
             #     reward_tensor, reward_metrics = ray.get(self.reward_fn.compute_reward.remote(new_batch))
@@ -705,7 +910,7 @@ class RayPPOTrainer:
             #         metrics.update({f"reward/{k}": v for k, v in reduce_metrics(all_metrics).items()})
 
             #     return batch[: self.config.data.rollout_batch_size * self.config.worker.rollout.n]
-            return new_batch_with_image, new_batch_without_image
+            return new_batch_with_image, new_batch_without_image, text_new_batch_with_image, text_new_batch_without_image
 
     def fit(self):
         """
@@ -739,7 +944,7 @@ class RayPPOTrainer:
                 # make a batch of data
                 with timer("gen", timing_raw):
                     self.actor_rollout_ref_wg.prepare_rollout_engine()
-                    batch_with_img, batch_without_img = self._make_batch_data(metrics=metrics)
+                    batch_with_img, batch_without_img, text_new_batch_with_image, text_new_batch_without_image = self._make_batch_data(metrics=metrics)
                     self.actor_rollout_ref_wg.release_rollout_engine()
                     
                     
@@ -748,10 +953,15 @@ class RayPPOTrainer:
                 # Please take care when you implement group based adv computation such as GRPO and rloo
                 self._balance_batch(batch_with_img, metrics=metrics)
                 self._balance_batch(batch_without_img, metrics=metrics)
+                self._balance_batch(text_new_batch_with_image, metrics=metrics, logging_prefix="text_global_seqlen")
+                self._balance_batch(text_new_batch_without_image, metrics=metrics, logging_prefix="text_global_seqlen")
+
 
                 # compute global valid tokens
                 batch_with_img.meta_info["global_token_num"] = torch.sum(batch_with_img.batch["attention_mask"], dim=-1).tolist()
                 batch_without_img.meta_info["global_token_num"] = torch.sum(batch_without_img.batch["attention_mask"], dim=-1).tolist()
+                text_new_batch_with_image.meta_info["global_token_num"] = torch.sum(text_new_batch_with_image.batch["attention_mask"], dim=-1).tolist()
+                text_new_batch_without_image.meta_info["global_token_num"] = torch.sum(text_new_batch_without_image.batch["attention_mask"], dim=-1).tolist()
 
                 # recompute old_log_probs
                 with timer("old", timing_raw):
@@ -760,6 +970,14 @@ class RayPPOTrainer:
                     
                     old_log_probs_without_img = self.actor_rollout_ref_wg.compute_log_probs(batch_without_img)
                     batch_without_img = batch_without_img.union(old_log_probs_without_img)
+
+                    old_log_text_probs_with_img = self.actor_rollout_ref_wg.compute_log_probs(text_new_batch_with_image)
+                    text_new_batch_with_image = text_new_batch_with_image.union(old_log_text_probs_with_img)
+
+                    old_log_text_probs_without_img = self.actor_rollout_ref_wg.compute_log_probs(text_new_batch_without_image)
+                    text_new_batch_without_image = text_new_batch_without_image.union(old_log_text_probs_without_img)
+
+
 
 
                 # compute ref_log_probs
@@ -771,9 +989,17 @@ class RayPPOTrainer:
                         ref_log_probs_without_img = self.actor_rollout_ref_wg.compute_ref_log_probs(batch_without_img)
                         batch_without_img = batch_without_img.union(ref_log_probs_without_img)
 
+                        ref_log_text_probs_with_img = self.actor_rollout_ref_wg.compute_ref_log_probs(text_new_batch_with_image)
+                        text_new_batch_with_image = text_new_batch_with_image.union(ref_log_text_probs_with_img)
 
-                batch = concat_data_protos(batch_with_img, batch_without_img)
-                batch.meta_info["rollout_type"] = ["with_image"] * len(batch_with_img) + ["without_image"] * len(batch_without_img)
+                        ref_log_text_probs_without_img = self.actor_rollout_ref_wg.compute_ref_log_probs(text_new_batch_without_image)
+                        text_new_batch_without_image = text_new_batch_without_image.union(ref_log_text_probs_without_img)
+
+
+
+
+                batch = concat_data_protos(concat_data_protos(batch_with_img, batch_without_img), concat_data_protos(text_new_batch_with_image, text_new_batch_without_image))
+                batch.meta_info["rollout_type"] = ["with_image"] * len(batch_with_img) + ["without_image"] * len(batch_without_img) + ["text_with_image"] * len(text_new_batch_with_image) + ["text_without_image"] * len(text_new_batch_without_image)
 
                 
                 # compute reward

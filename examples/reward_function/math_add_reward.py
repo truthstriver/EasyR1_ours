@@ -42,10 +42,13 @@ def compute_score(reward_inputs: List[Dict[str, Any]], format_weight: float = 0.
         if rollout_type := reward_input.get("rollout_type"):
             if rollout_type == "without_image":
                 accuracy_score = 0
-
                 if "<no_image>" in response:
                     accuracy_score = 1
-            
+            if rollout_type == "txt_with_image":
+                accuracy_score = 0
+                if "<txt_enough>" in response:
+                    accuracy_score = 1
+    
         scores.append(
             {
                 "overall": (1 - format_weight) * accuracy_score + format_weight * format_score,
