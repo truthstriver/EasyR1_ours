@@ -667,56 +667,175 @@ class RayPPOTrainer:
         samples = samples[: self.config.trainer.val_generations_to_log]
         self.logger.log_generation(samples, self.global_step)
 
+    # def _validate(self) -> Dict[str, Any]:
+    #     reward_tensor_lst = []
+    #     # Lists to collect samples for the table
+    #     sample_inputs, sample_outputs, sample_labels, sample_scores = [], [], [], []
+    #     reward_metrics_lst = defaultdict(list)
+    #     print("Start validation...")
+    #     self.actor_rollout_ref_wg.prepare_rollout_engine()
+    #     for batch_dict in self.val_dataloader:
+    #         test_batch = DataProto.from_single_dict(batch_dict)
+    #         test_gen_batch = test_batch.pop(
+    #             batch_keys=["input_ids", "attention_mask", "position_ids"],
+    #             non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
+    #         )
+    #         repeat_times = self.config.worker.rollout.val_override_config.get("n", 1)
+    #         test_gen_batch.meta_info = self.config.worker.rollout.val_override_config
+    #         test_gen_batch.meta_info["min_pixels"] = self.config.data.min_pixels
+    #         test_gen_batch.meta_info["max_pixels"] = self.config.data.max_pixels
+
+    #         test_gen_batch, pad_size = pad_dataproto_to_divisor(test_gen_batch, self.actor_rollout_ref_wg.world_size)
+    #         test_output_gen_batch = self.actor_rollout_ref_wg.generate_sequences(test_gen_batch)
+    #         test_output_gen_batch = unpad_dataproto(test_output_gen_batch, pad_size=pad_size * repeat_times)
+
+    #         # repeat to align with repeated responses in rollout
+    #         test_batch = test_batch.repeat(repeat_times=repeat_times, interleave=True)
+    #         test_batch = test_batch.union(test_output_gen_batch)
+
+    #         # evaluate using reward_function
+    #         reward_tensor, reward_metrics = ray.get(self.val_reward_fn.compute_reward.remote(test_batch))
+
+    #         # store generations
+    #         input_ids = test_batch.batch["prompts"]
+    #         input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
+    #         output_ids = test_batch.batch["responses"]
+    #         output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
+    #         scores = reward_tensor.sum(-1).cpu().tolist()
+    #         sample_inputs.extend(input_texts)
+    #         sample_outputs.extend(output_texts)
+    #         sample_labels.extend(test_batch.non_tensor_batch["ground_truth"].tolist())
+    #         sample_scores.extend(scores)
+
+    #         reward_tensor_lst.append(reward_tensor)
+    #         for key, value in reward_metrics.items():
+    #             reward_metrics_lst[key].extend(value)
+
+    #     self.actor_rollout_ref_wg.release_rollout_engine()
+    #     self._maybe_log_val_generations(sample_inputs, sample_outputs, sample_labels, sample_scores)
+    #     self.val_reward_score = torch.cat(reward_tensor_lst, dim=0).sum(-1).mean().item()
+    #     val_reward_metrics = {f"val/{key}_reward": value for key, value in reduce_metrics(reward_metrics_lst).items()}
+    #     print("Finish validation.")
+    #     return {"val/reward_score": self.val_reward_score, **val_reward_metrics}
     def _validate(self) -> Dict[str, Any]:
-        reward_tensor_lst = []
-        # Lists to collect samples for the table
-        sample_inputs, sample_outputs, sample_labels, sample_scores = [], [], [], []
-        reward_metrics_lst = defaultdict(list)
+        """
+        在验证集上评估模型，并实现四种不同的数据处理方式：
+        1. with_image: 多模态输入，包含图像。
+        2. without_image: 多模态输入，但移除图像。
+        3. text_with_image: 纯文本输入，但添加 <image> 标记。
+        4. text_without_image: 纯文本输入，不含 <image> 标记。
+        """
+        # 初始化用于收集所有四种数据类型指标的容器
+        all_reward_metrics_lst = defaultdict(lambda: defaultdict(list))
+        all_reward_tensor_lst = defaultdict(list)
+        all_samples = defaultdict(lambda: {"inputs": [], "outputs": [], "labels": [], "scores": []})
+
         print("Start validation...")
         self.actor_rollout_ref_wg.prepare_rollout_engine()
+
         for batch_dict in self.val_dataloader:
-            test_batch = DataProto.from_single_dict(batch_dict)
-            test_gen_batch = test_batch.pop(
+            # 1. 准备初始数据批次
+            base_dataproto = DataProto.from_single_dict(batch_dict)
+            
+            # 将数据分为多模态部分和纯文本部分
+            batch_with_img_base, batch_pure_text_base = split_data_proto(base_dataproto)
+
+            # 2. 创建四种数据变体用于生成
+            # a) 带有图像的数据 (原始多模态)
+            gen_batch_with_img = batch_with_img_base.pop(
                 batch_keys=["input_ids", "attention_mask", "position_ids"],
                 non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
             )
-            repeat_times = self.config.worker.rollout.val_override_config.get("n", 1)
-            test_gen_batch.meta_info = self.config.worker.rollout.val_override_config
-            test_gen_batch.meta_info["min_pixels"] = self.config.data.min_pixels
-            test_gen_batch.meta_info["max_pixels"] = self.config.data.max_pixels
 
-            test_gen_batch, pad_size = pad_dataproto_to_divisor(test_gen_batch, self.actor_rollout_ref_wg.world_size)
-            test_output_gen_batch = self.actor_rollout_ref_wg.generate_sequences(test_gen_batch)
-            test_output_gen_batch = unpad_dataproto(test_output_gen_batch, pad_size=pad_size * repeat_times)
+            # b) 移除图像的数据
+            gen_batch_without_img = deepcopy(gen_batch_with_img)
+            _ = gen_batch_without_img.pop(batch_keys=[], non_tensor_batch_keys=["multi_modal_data"])
+            gen_batch_without_img.batch["input_ids"] = modify_input_ids(gen_batch_without_img.batch["input_ids"])
+            gen_batch_without_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids(
+                gen_batch_without_img.non_tensor_batch["raw_prompt_ids"]
+            )
 
-            # repeat to align with repeated responses in rollout
-            test_batch = test_batch.repeat(repeat_times=repeat_times, interleave=True)
-            test_batch = test_batch.union(test_output_gen_batch)
+            # c) 纯文本数据 (原始纯文本)
+            text_gen_batch_without_img = batch_pure_text_base.pop(
+                batch_keys=["input_ids", "attention_mask", "position_ids"],
+                non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
+            )
 
-            # evaluate using reward_function
-            reward_tensor, reward_metrics = ray.get(self.val_reward_fn.compute_reward.remote(test_batch))
+            # d) 添加了<image>标记的纯文本数据
+            text_gen_batch_with_img = deepcopy(text_gen_batch_without_img)
+            text_gen_batch_with_img.batch["input_ids"] = modify_input_ids_v2(text_gen_batch_with_img.batch["input_ids"])
+            text_gen_batch_with_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids_v2(
+                text_gen_batch_with_img.non_tensor_batch["raw_prompt_ids"]
+            )
+            
+            # 将四种变体及其对应的原始数据批次分组
+            validation_cases = {
+                "with_image": (gen_batch_with_img, batch_with_img_base),
+                "without_image": (gen_batch_without_img, batch_with_img_base),
+                "text_with_image": (text_gen_batch_with_img, batch_pure_text_base),
+                "text_without_image": (text_gen_batch_without_img, batch_pure_text_base),
+            }
 
-            # store generations
-            input_ids = test_batch.batch["prompts"]
-            input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
-            output_ids = test_batch.batch["responses"]
-            output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
-            scores = reward_tensor.sum(-1).cpu().tolist()
-            sample_inputs.extend(input_texts)
-            sample_outputs.extend(output_texts)
-            sample_labels.extend(test_batch.non_tensor_batch["ground_truth"].tolist())
-            sample_scores.extend(scores)
+            # 3. 对每种数据变体进行处理和评估
+            for case_name, (gen_batch, original_batch) in validation_cases.items():
+                gen_batch.meta_info = self.config.worker.rollout.val_override_config
+                gen_batch.meta_info["min_pixels"] = self.config.data.min_pixels
+                gen_batch.meta_info["max_pixels"] = self.config.data.max_pixels
 
-            reward_tensor_lst.append(reward_tensor)
-            for key, value in reward_metrics.items():
-                reward_metrics_lst[key].extend(value)
+                # 填充、生成序列、并移除填充
+                gen_batch, pad_size = pad_dataproto_to_divisor(gen_batch, self.actor_rollout_ref_wg.world_size)
+                test_output_gen_batch = self.actor_rollout_ref_wg.generate_sequences(gen_batch)
+                test_output_gen_batch = unpad_dataproto(test_output_gen_batch, pad_size=pad_size)
+
+                # 合并生成结果与原始数据
+                final_batch = original_batch.union(test_output_gen_batch)
+
+                # 计算奖励
+                reward_tensor, reward_metrics = ray.get(self.val_reward_fn.compute_reward.remote(final_batch))
+
+                # 解码并存储样本
+                input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in final_batch.batch["prompts"]]
+                output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in final_batch.batch["responses"]]
+                scores = reward_tensor.sum(-1).cpu().tolist()
+                
+                all_samples[case_name]["inputs"].extend(input_texts)
+                all_samples[case_name]["outputs"].extend(output_texts)
+                all_samples[case_name]["labels"].extend(final_batch.non_tensor_batch["ground_truth"].tolist())
+                all_samples[case_name]["scores"].extend(scores)
+
+                # 收集奖励和指标
+                all_reward_tensor_lst[case_name].append(reward_tensor)
+                for key, value in reward_metrics.items():
+                    all_reward_metrics_lst[case_name][key].extend(value)
 
         self.actor_rollout_ref_wg.release_rollout_engine()
-        self._maybe_log_val_generations(sample_inputs, sample_outputs, sample_labels, sample_scores)
-        self.val_reward_score = torch.cat(reward_tensor_lst, dim=0).sum(-1).mean().item()
-        val_reward_metrics = {f"val/{key}_reward": value for key, value in reduce_metrics(reward_metrics_lst).items()}
+
+        # 4. 聚合和记录结果
+        final_val_metrics = {}
+        total_scores = []
+        
+        for case_name, samples in all_samples.items():
+            # 记录每种情况下的生成样本
+            self._maybe_log_val_generations(
+                samples["inputs"], samples["outputs"], samples["labels"], samples["scores"], log_prefix=f"val_{case_name}"
+            )
+
+            # 计算并记录每种情况的奖励分数
+            reward_score = torch.cat(all_reward_tensor_lst[case_name], dim=0).sum(-1).mean().item()
+            final_val_metrics[f"val/{case_name}/reward_score"] = reward_score
+            total_scores.extend(samples["scores"])
+
+            # 聚合和记录其他奖励指标
+            reward_metrics = reduce_metrics(all_reward_metrics_lst[case_name])
+            for key, value in reward_metrics.items():
+                final_val_metrics[f"val/{case_name}/{key}_reward"] = value
+        
+        # 计算并记录一个总的平均奖励分数，以保持向后兼容性
+        self.val_reward_score = np.mean(total_scores) if total_scores else 0.0
+        final_val_metrics["val/reward_score"] = self.val_reward_score
+
         print("Finish validation.")
-        return {"val/reward_score": self.val_reward_score, **val_reward_metrics}
+        return final_val_metrics
 
     def _balance_batch(self, batch: DataProto, metrics: Dict[str, Any], logging_prefix: str = "global_seqlen") -> None:
         """Reorder the data on single controller such that each dp rank gets similar total tokens"""
