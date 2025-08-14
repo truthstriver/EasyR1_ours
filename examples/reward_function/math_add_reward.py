@@ -44,7 +44,7 @@ def compute_score(reward_inputs: List[Dict[str, Any]], format_weight: float = 0.
                 accuracy_score = 0
                 if "<no_image>" in response:
                     accuracy_score = 1
-            if rollout_type == "txt_with_image":
+            if rollout_type == "text_with_image":
                 accuracy_score = 0
                 if "<txt_enough>" in response:
                     accuracy_score = 1
