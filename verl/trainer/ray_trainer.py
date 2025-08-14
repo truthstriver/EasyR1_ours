@@ -761,10 +761,15 @@ class RayPPOTrainer:
                 non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
             )
 
+
             # d) 添加了<image>标记的纯文本数据
             text_gen_batch_with_img = deepcopy(text_gen_batch_without_img)
-            text_gen_batch_with_img.batch["input_ids"] = modify_input_ids_v2(text_gen_batch_with_img.batch["input_ids"])
-            text_gen_batch_with_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids_v2(
+
+            _ = text_gen_batch_without_img.pop(batch_keys=[],non_tensor_batch_keys=["multi_modal_data"],meta_info_keys=[])
+            
+
+            text_gen_batch_without_img.batch["input_ids"] = modify_input_ids(text_gen_batch_without_img.batch["input_ids"])
+            text_gen_batch_without_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids(
                 text_gen_batch_with_img.non_tensor_batch["raw_prompt_ids"]
             )
             
@@ -901,9 +906,9 @@ class RayPPOTrainer:
                 gen_batch_without_img.non_tensor_batch["raw_prompt_ids"])
             
             # 文本加图要有<image token>
-            text_gen_batch_with_img.batch["input_ids"] = modify_input_ids_v2(text_gen_batch_with_img.batch["input_ids"])
-            text_gen_batch_with_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids_v2(
-                text_gen_batch_with_img.non_tensor_batch["raw_prompt_ids"])
+            text_gen_batch_without_img.batch["input_ids"] = modify_input_ids(text_gen_batch_without_img.batch["input_ids"])
+            text_gen_batch_without_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids(
+                text_gen_batch_without_img.non_tensor_batch["raw_prompt_ids"])
 
 
             n_with_img = int(self.config.worker.rollout.n * (1-self.config.worker.rollout.split_ratio))
