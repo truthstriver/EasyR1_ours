@@ -47,11 +47,11 @@ test_data = dataset["test"]  # or "test" if split exists; adjust as needed
 processed_test_data = []
 for idx, item in enumerate(test_data):
     # Extract image (list of PIL images, we assume one image per item)
-    images = item["images"]
+    images = None
     pil_image = images[0] if isinstance(images, list) and len(images) > 0 else None
 
     # Extract problem and answer
-    problem_text = item["problem"].replace("<image>", "").strip()  # remove <image> placeholder
+    problem_text = item["question"].replace("<image>", "").strip()  # remove <image> placeholder
     answer = item["answer"]
 
     # Parse options if present in problem text
@@ -107,29 +107,11 @@ def process_item(item, client_instance):
 
     item['problem_for_model'] = problem_str
 
-    if 'decoded_image' not in item or not item['decoded_image']:
-        return {
-            "input_problem": item['problem_for_model'],
-            "image_data_missing": True,
-            "model_output_raw": "N/A",
-            "model_output_processed": "N/A",
-            "model_answer": "N/A",
-            "ground_truth": item["answer"],
-            "is_correct": False,
-            "problem_id": item.get("id", "N/A")
-        }
-
-    pil_image = item['decoded_image']
 
     try:
         buffered = io.BytesIO()
-        if pil_image.mode == 'RGBA':
-            pil_image.save(buffered, format="PNG")
-        else:
-            pil_image.convert('RGB').save(buffered, format="PNG")
 
-        encoded_image_text = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        base64_image_url = f"data:image/png;base64,{encoded_image_text}"
+
 
         messages = [
             {"role": "system", "content": ""},
