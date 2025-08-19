@@ -53,7 +53,15 @@ vllm serve  /home/siqingyi/Easy-R1_checkpoints/plain_grpo/global_step_50/actor/h
 python scripts/test_mimo_mathvista.py
 python scripts/test_mimo_mathvision.py
 python scripts/test_mimo_mathverse.py
+
+python scripts/re_eval.py --generation_path your_results.json --data_name mathvision
 ```
+
+评测包括两类\
+测试方法 GRPO：评测其抱恨图文数学题、纯文本数学题、图文不带图数学题、纯文本带图数学题
+baseline GRPO：要同时包含图文数学题、纯文本数学题
+
+纯文本数学题评测：
 
 ---
 # EasyR1: An Efficient, Scalable, Multi-Modality RL Training Framework
