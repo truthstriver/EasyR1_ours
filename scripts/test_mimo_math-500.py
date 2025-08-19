@@ -84,7 +84,7 @@ test_data = processed_test_data  # replace with processed format
 # Prepare output directory and file
 output_dir = "results"
 os.makedirs(output_dir, exist_ok=True)
-output_file = os.path.join(output_dir, "GSM8k_results_xiaomimimo_vl_mathruler_grading.json")
+output_file = os.path.join(output_dir, "math-500_results_xiaomimimo_vl_mathruler_grading.json")
 
 # Batch evaluation
 concurrent_requests_batch_size = 20
@@ -142,7 +142,7 @@ def process_item(item, client_instance):
     except Exception as e:
         error_message = str(e)
         print(f"Error processing response for problem ID {item.get('id', 'N/A')}: {e}")
-
+    print(response_text_processed)
     return {
         "input_problem": item['problem_for_model'],
         "image_present": True,
