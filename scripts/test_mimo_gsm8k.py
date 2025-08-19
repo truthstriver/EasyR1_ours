@@ -29,7 +29,7 @@ from mathruler.grader import extract_boxed_content, grade_answer
 
 # Set OpenAI's API key and API base to use vLLM's API server.
 openai_api_key = "EMPTY"
-openai_api_base = "http://localhost:8006/v1"
+openai_api_base = "http://localhost:8007/v1"
 client = OpenAI(
     api_key=openai_api_key,
     base_url=openai_api_base,
@@ -84,7 +84,7 @@ test_data = processed_test_data  # replace with processed format
 # Prepare output directory and file
 output_dir = "results"
 os.makedirs(output_dir, exist_ok=True)
-output_file = os.path.join(output_dir, "GSM8k_results_xiaomimimo_vl_mathruler_grading.json")
+output_file = os.path.join(output_dir, "GSM8k_results_xiaomimimo_vl_mathruler_grading_GRPO.json")
 
 # Batch evaluation
 concurrent_requests_batch_size = 20
