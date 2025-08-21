@@ -786,7 +786,10 @@ class RayPPOTrainer:
                 gen_batch.meta_info = self.config.worker.rollout.val_override_config
                 gen_batch.meta_info["min_pixels"] = self.config.data.min_pixels
                 gen_batch.meta_info["max_pixels"] = self.config.data.max_pixels
-
+                
+                batch_size = len(gen_batch.batch["input_ids"])
+                gen_batch.meta_info["rollout_type"] = [case_name] * batch_size
+                
                 # 填充、生成序列、并移除填充
                 gen_batch, pad_size = pad_dataproto_to_divisor(gen_batch, self.actor_rollout_ref_wg.world_size)
                 test_output_gen_batch = self.actor_rollout_ref_wg.generate_sequences(gen_batch)
