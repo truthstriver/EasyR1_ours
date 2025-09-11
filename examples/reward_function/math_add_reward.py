@@ -120,7 +120,7 @@ def compute_score(reward_inputs: List[Dict[str, Any]], format_weight: float = 0.
             # Perfect score if it's a correct, direct refusal with no leakage.
             if is_correct_refusal(response, "missing"): # and not has_reasoning_leakage(response):
                 accuracy_score = 1.0
-                format_score = format_reward(response)
+            format_score = format_reward(response)
             # Otherwise, the score remains 0 (punishing wrong attempts or leaky refusals).
 
         # --- Case 2: The problem has an IRRELEVANT image ---
@@ -129,7 +129,7 @@ def compute_score(reward_inputs: List[Dict[str, Any]], format_weight: float = 0.
             # Perfect score if it's a correct, direct refusal with no leakage.
             if is_correct_refusal(response, "irrelevant"): # and not has_reasoning_leakage(response):
                 accuracy_score = 1.0
-                format_score = format_reward(response)
+            format_score = format_reward(response)
             # Otherwise, score is 0.
 
         # --- Case 3: The problem is standard and solvable ---

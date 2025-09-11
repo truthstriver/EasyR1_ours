@@ -814,6 +814,8 @@ class RayPPOTrainer:
 
             # b) 移除图像的数据
             gen_batch_without_img = deepcopy(gen_batch_with_img)
+            gen_batch_with_img = split_data_proto_by_ratio(gen_batch_with_img,1-self.config.worker.rollout.split_ratio)
+            gen_batch_without_img = split_data_proto_by_ratio(gen_batch_without_img,-self.config.worker.rollout.split_ratio)
             _ = gen_batch_without_img.pop(batch_keys=[], non_tensor_batch_keys=["multi_modal_data"])
             gen_batch_without_img.batch["input_ids"] = modify_input_ids(gen_batch_without_img.batch["input_ids"])
             gen_batch_without_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids(
@@ -829,7 +831,8 @@ class RayPPOTrainer:
 
             # d) 添加了<image>标记的纯文本数据
             text_gen_batch_with_img = deepcopy(text_gen_batch_without_img)
-
+            text_gen_batch_with_img = split_data_proto_by_ratio(text_gen_batch_with_img,-self.config.worker.rollout.split_ratio)
+            text_gen_batch_without_img = split_data_proto_by_ratio(text_gen_batch_without_img,1-self.config.worker.rollout.split_ratio)
             _ = text_gen_batch_without_img.pop(batch_keys=[],non_tensor_batch_keys=["multi_modal_data"],meta_info_keys=[])
             
 
