@@ -20,9 +20,9 @@ trainer:
 bash examples/XiaomiMiMO_VL_7B_geo3k_grpo.sh
 ```
 
-在脚本中可以修改rollout_n以及rollout变化的比例SPLIT_RATIO。
+在脚本中可以修改rollout_n以及rollout变化的比例SPLIT_RATIO。这里修正了比例逻辑。
 
-现在新增了新的实验
+现在新增了新的实验。
 ```bash
 bash examples/XiaomiMiMO_VL_7B_geo3k_grpo_add_reward.sh
 ```
