@@ -341,6 +341,71 @@ def split_data_proto(obj: DataProto):
 
     return obj1, obj2
 
+def split_data_proto_by_ratio(obj: DataProto, n: float):
+    """
+    将一个 DataProto 对象按比例 n 进行划分。
+
+    如果 n 为正 (0 < n <= 1)，则返回包含前 n 比例数据的 DataProto 对象。
+    如果 n 为负 (-1 <= n < 0)，则返回包含后 |n| 比例数据的 DataProto 对象。
+
+    Args:
+        obj: 要划分的 DataProto 对象。
+        n: 划分比例，取值范围为 [-1, 1] 且不为 0。
+
+    Returns:
+        一个包含划分后数据的新 DataProto 对象。
+    """
+    if not isinstance(obj, DataProto):
+        raise TypeError("输入必须是 DataProto 对象。")
+    if not isinstance(n, float) or not (-1 <= n <= 1) or n == 0:
+        raise ValueError("参数 'n' 必须是 [-1, 1] 范围内的浮点数且不为 0。")
+
+    total_size = len(obj.batch)
+    if total_size == 0:
+        raise ValueError("无法划分空的 DataProto 对象。")
+
+    if n > 0:
+        # 正比例：取列表前 n * total_size 的部分
+        # 例如 n=0.8, total_size=10, end_idx=8, 切片为 [0:8]
+        end_idx = int(total_size * n)
+        slicer = slice(None, end_idx)
+    else: # n < 0
+        # 负比例：取列表后 |n| * total_size 的部分
+        # 例如 n=-0.2, total_size=10, start_idx=8, 切片为 [8:]
+        start_idx = int(total_size * (1 + n))
+        slicer = slice(start_idx, None)
+        
+    # 1. 按比例切片 TensorDict `batch`
+    new_batch = obj.batch[slicer]
+
+    # 2. 按比例切片 `non_tensor_batch` 中的Numpy数组
+    new_non_tensor_batch = {}
+    for key, val in obj.non_tensor_batch.items():
+        if isinstance(val, np.ndarray):
+            new_non_tensor_batch[key] = val[slicer]
+        else:
+            raise TypeError(f"在 non_tensor_batch 中遇到非预期的类型 '{key}': {type(val)}")
+
+    # 3. 按比例处理 meta_info
+    new_meta_info = {}
+    for key, val in obj.meta_info.items():
+        if isinstance(val, list):
+            # 对于列表，按比例切片
+            new_meta_info[key] = val[slicer]
+        elif isinstance(val, (int, float, str, dict)):
+            # 对于标量和字典，它们不与 batch 的长度关联，直接复制
+            new_meta_info[key] = val
+        else:
+            raise TypeError(f"在 meta_info 中遇到非预期的类型 '{key}': {type(val)}")
+
+    # 创建并返回新的 DataProto 对象
+    new_obj = DataProto(
+        batch=new_batch,
+        non_tensor_batch=new_non_tensor_batch,
+        meta_info=new_meta_info
+    )
+
+    return new_obj
 
 class Role(IntEnum):
     """
@@ -882,26 +947,33 @@ class RayPPOTrainer:
             # pop those keys for generation
             new_batch, batch_pure_text =  split_data_proto(new_batch_tmp)
 
-
+            # INPUT 1
             gen_batch_with_img = new_batch.pop(
                 batch_keys=["input_ids", "attention_mask", "position_ids"],
                 non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
                 meta_info_keys=["min_pixels", "max_pixels"],
             )
+            # INPUT 2
             gen_batch_without_img = deepcopy(gen_batch_with_img)  # avoid modifying the original batch
+            # 取 1-n的比例作为正例
+            gen_batch_with_img = split_data_proto_by_ratio(gen_batch_with_img,1-self.config.worker.rollout.split_ratio)
+            # 取后n的比例作为负例
+            gen_batch_without_img = split_data_proto_by_ratio(gen_batch_without_img,-self.config.worker.rollout.split_ratio)
             _ = gen_batch_without_img.pop(batch_keys=[],non_tensor_batch_keys=["multi_modal_data"],meta_info_keys=[])
-
+            
+            # INPUT 3
             text_gen_batch_with_img = batch_pure_text.pop(
                 batch_keys=["input_ids", "attention_mask", "position_ids"],
                 non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
                 meta_info_keys=["min_pixels", "max_pixels"],
             )
+            # INPUT 4
             text_gen_batch_without_img = deepcopy(text_gen_batch_with_img)  # avoid modifying the original batch
+
+            text_gen_batch_with_img = split_data_proto_by_ratio(text_gen_batch_with_img,-self.config.worker.rollout.split_ratio)
+            text_gen_batch_without_img = split_data_proto_by_ratio(text_gen_batch_without_img,1-self.config.worker.rollout.split_ratio)
+
             _ = text_gen_batch_without_img.pop(batch_keys=[],non_tensor_batch_keys=["multi_modal_data"],meta_info_keys=[])
-            
-
-
-
             
             # 应用修改 去掉图<image token>也得去掉
             gen_batch_without_img.batch["input_ids"] = modify_input_ids(gen_batch_without_img.batch["input_ids"])
@@ -914,13 +986,15 @@ class RayPPOTrainer:
                 text_gen_batch_without_img.non_tensor_batch["raw_prompt_ids"])
 
 
-            n_with_img = int(self.config.worker.rollout.n * (1-self.config.worker.rollout.split_ratio))
+            #　比例参数计算
+            # n_with_img = int(self.config.worker.rollout.n * (1-self.config.worker.rollout.split_ratio))
 
-            gen_batch_with_img.meta_info["n"] = n_with_img
-            gen_batch_without_img.meta_info["n"] = self.config.worker.rollout.n - n_with_img
+            # #　盈利参数计算
+            # gen_batch_with_img.meta_info["n"] = n_with_img
+            # gen_batch_without_img.meta_info["n"] = self.config.worker.rollout.n - n_with_img
 
-            text_gen_batch_without_img.meta_info['n'] = n_with_img
-            text_gen_batch_with_img.meta_info["n"] = self.config.worker.rollout.n - n_with_img
+            # text_gen_batch_without_img.meta_info['n'] = n_with_img
+            # text_gen_batch_with_img.meta_info["n"] = self.config.worker.rollout.n - n_with_img
             
 
             # generate a batch
@@ -991,10 +1065,10 @@ class RayPPOTrainer:
                 repeat_times=self.config.worker.rollout.n - n_with_img, interleave=True
             )  # repeat to align with repeated responses in rollout
             # new_batch = new_batch.union(gen_batch_output)
-            new_batch_with_image = new_batch_with_image.union(gen_batch_output_with_img)
-            new_batch_without_image = new_batch_without_image.union(gen_batch_output_without_img)
-            text_new_batch_with_image = text_new_batch_with_image.union(text_gen_batch_output_with_img)
-            text_new_batch_without_image = text_new_batch_without_image.union(text_gen_batch_output_without_img)
+            new_batch_with_image = new_batch_with_image.union(gen_batch_output_with_img)                            # batch \times rollout.n
+            new_batch_without_image = new_batch_without_image.union(gen_batch_output_without_img)                   # batch \times rollout.n
+            text_new_batch_with_image = text_new_batch_with_image.union(text_gen_batch_output_with_img)             # batch \times rollout.n
+            text_new_batch_without_image = text_new_batch_without_image.union(text_gen_batch_output_without_img)    # batch \times rollout.n
             # # filter group
             # if self.config.algorithm.online_filtering:
             #     reward_tensor, reward_metrics = ray.get(self.reward_fn.compute_reward.remote(new_batch))
