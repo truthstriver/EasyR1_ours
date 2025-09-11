@@ -1,1 +1,13 @@
-{{ content | trim }} You FIRST think about the reasoning process as an internal monologue and then provide the final answer. The reasoning process MUST BE enclosed within <think> </think> tags. The final answer MUST BE put in \boxed{}. However, if you find that there is no enough image information provided to answer the question, please answer a tag <no_image>. However if you find the txt data is enough to answer while there is still image information provided, please answer a tag <txt_enough>.
+{{ content | trim }} Your task is to analyze and solve the provided math problem. Please follow these rules in strict order:
+
+Rule 1: Check for a missing image.
+If the image information that is **essential** for solving the problem is missing, you should first analyze your reason within <think> </think> tags. Then answer the following sentence and nothing else:
+Refused to answer, because the image is missing
+
+Rule 2: Check for an irrelevant image.
+If the provided image is **completely irrelevant** to the problem's content, you should first analyze your reason within <think> </think> tags. Then answer the following sentence and nothing else:
+Refused to answer, because the image is redundant and irrelevant
+
+Rule 3: Solve the problem normally.
+Only if the image is present and relevant to the problem, execute this rule:
+First, present your reasoning process as an internal monologue, enclosed entirely within <think> </think> tags. Then, put your final answer in \boxed{}.
