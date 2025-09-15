@@ -17,6 +17,7 @@ This trainer supports model-agonistic model initialization with huggingface
 """
 
 import json
+import math
 import os
 import uuid
 from collections import defaultdict
@@ -372,7 +373,8 @@ def split_data_proto_by_ratio(obj: DataProto, n: float):
     else: # n < 0
         # 负比例：取列表后 |n| * total_size 的部分
         # 例如 n=-0.2, total_size=10, start_idx=8, 切片为 [8:]
-        start_idx = int(total_size * (1 + n))
+        # start_idx = int(total_size * (1 + n))
+        start_idx = math.ceil(total_size * (1 + n))
         slicer = slice(start_idx, None)
         
     # 1. 按比例切片 TensorDict `batch`
@@ -800,10 +802,10 @@ class RayPPOTrainer:
 
         for batch_dict in self.val_dataloader:
             # 1. 准备初始数据批次
-            base_dataproto = DataProto.from_single_dict(batch_dict)
+            base_dataproto = DataProto.from_single_dict(batch_dict) # 64
             
             # 将数据分为多模态部分和纯文本部分
-            batch_with_img_base, batch_pure_text_base = split_data_proto(base_dataproto)
+            batch_with_img_base, batch_pure_text_base = split_data_proto(base_dataproto) # 64 64 
 
             # 2. 创建四种数据变体用于生成
             # a) 带有图像的数据 (原始多模态)
@@ -812,6 +814,12 @@ class RayPPOTrainer:
                 non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
             )
 
+            origin_batch_with_img_base = deepcopy(batch_with_img_base)
+            origin_batch_without_img_base = deepcopy(batch_with_img_base)
+            origin_batch_with_img_base = split_data_proto_by_ratio(origin_batch_with_img_base,1-self.config.worker.rollout.split_ratio)
+            origin_batch_without_img_base = split_data_proto_by_ratio(origin_batch_without_img_base,-self.config.worker.rollout.split_ratio)
+            
+            
             # b) 移除图像的数据
             gen_batch_without_img = deepcopy(gen_batch_with_img)
             gen_batch_with_img = split_data_proto_by_ratio(gen_batch_with_img,1-self.config.worker.rollout.split_ratio)
@@ -828,6 +836,10 @@ class RayPPOTrainer:
                 non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
             )
 
+            origin_text_gen_batch_without_img = deepcopy(batch_pure_text_base)
+            origin_text_gen_batch_with_img  = deepcopy(batch_pure_text_base)
+            origin_text_gen_batch_without_img = split_data_proto_by_ratio(origin_text_gen_batch_without_img,-self.config.worker.rollout.split_ratio)
+            origin_text_gen_batch_with_img = split_data_proto_by_ratio(origin_text_gen_batch_with_img,1-self.config.worker.rollout.split_ratio)
 
             # d) 添加了<image>标记的纯文本数据
             text_gen_batch_with_img = deepcopy(text_gen_batch_without_img)
@@ -843,12 +855,12 @@ class RayPPOTrainer:
             
             # 将四种变体及其对应的原始数据批次分组
             validation_cases = {
-                "with_image": (gen_batch_with_img, batch_with_img_base),
-                "without_image": (gen_batch_without_img, batch_with_img_base),
-                "text_with_image": (text_gen_batch_with_img, batch_pure_text_base),
-                "text_without_image": (text_gen_batch_without_img, batch_pure_text_base),
+                "with_image": (gen_batch_with_img, origin_batch_with_img_base),
+                "without_image": (gen_batch_without_img, origin_batch_without_img_base),
+                "text_with_image": (text_gen_batch_with_img, origin_text_gen_batch_with_img),
+                "text_without_image": (text_gen_batch_without_img, origin_text_gen_batch_without_img),
             }
-
+            # import pdbp;pdbp.set_trace()
             # 3. 对每种数据变体进行处理和评估
             for case_name, (gen_batch, original_batch) in validation_cases.items():
                 gen_batch.meta_info = self.config.worker.rollout.val_override_config
@@ -865,7 +877,6 @@ class RayPPOTrainer:
 
                 # 合并生成结果与原始数据
                 final_batch = original_batch.union(test_output_gen_batch)
-
                 # 计算奖励
                 reward_tensor, reward_metrics = ray.get(self.val_reward_fn.compute_reward.remote(final_batch))
 
@@ -990,7 +1001,7 @@ class RayPPOTrainer:
 
 
             #　比例参数计算
-            # n_with_img = int(self.config.worker.rollout.n * (1-self.config.worker.rollout.split_ratio))
+            n_with_img = int(self.config.worker.rollout.n * (1-self.config.worker.rollout.split_ratio))
 
             # #　盈利参数计算
             # gen_batch_with_img.meta_info["n"] = n_with_img
@@ -1033,6 +1044,14 @@ class RayPPOTrainer:
 
             text_new_batch_with_image = deepcopy(batch_pure_text)
             text_new_batch_without_image = deepcopy(batch_pure_text)
+            
+            new_batch_with_image = split_data_proto_by_ratio(new_batch_with_image,1-self.config.worker.rollout.split_ratio)
+            new_batch_without_image = split_data_proto_by_ratio(new_batch_without_image,-self.config.worker.rollout.split_ratio)
+            text_new_batch_with_image = split_data_proto_by_ratio(text_new_batch_with_image,-self.config.worker.rollout.split_ratio)
+            text_new_batch_without_image = split_data_proto_by_ratio(text_new_batch_without_image,1-self.config.worker.rollout.split_ratio)
+
+            
+            
 
             new_batch_with_image.non_tensor_batch["uid"] = np.array(
                 [str(uuid.uuid4()) for _ in range(len(new_batch_with_image.batch))], dtype=object
