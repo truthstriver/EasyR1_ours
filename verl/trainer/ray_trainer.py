@@ -850,7 +850,7 @@ class RayPPOTrainer:
 
             text_gen_batch_without_img.batch["input_ids"] = modify_input_ids(text_gen_batch_without_img.batch["input_ids"])
             text_gen_batch_without_img.non_tensor_batch["raw_prompt_ids"] = modify_raw_prompt_ids(
-                text_gen_batch_with_img.non_tensor_batch["raw_prompt_ids"]
+                text_gen_batch_without_img.non_tensor_batch["raw_prompt_ids"]
             )
             
             # 将四种变体及其对应的原始数据批次分组
@@ -871,6 +871,7 @@ class RayPPOTrainer:
                 gen_batch.meta_info["rollout_type"] = [case_name] * batch_size
                 
                 # 填充、生成序列、并移除填充
+                # print("\033[93m TEST world size \033[0m", len(gen_batch.batch) ,self.actor_rollout_ref_wg.world_size)
                 gen_batch, pad_size = pad_dataproto_to_divisor(gen_batch, self.actor_rollout_ref_wg.world_size)
                 test_output_gen_batch = self.actor_rollout_ref_wg.generate_sequences(gen_batch)
                 test_output_gen_batch = unpad_dataproto(test_output_gen_batch, pad_size=pad_size)
